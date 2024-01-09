@@ -28,7 +28,7 @@ function toTitleCase(str) {
 // TYPES
 /** JSON signature of annotations expected by this script
  * @typedef {Object} Annotation
- * @property {"Highlight"|"Underline"|"Free Comment"|"Image"|"Heading"|"Question Callout"|"Strikethrough"|"remove"} type – of the annotation
+ * @property {"Highlight"|"Underline"|"Underscore"|"Free Comment"|"Image"|"Heading"|"Question Callout"|"Key Callout"|"Cite Callout"|"Other Callout"|"remove"} type – of the annotation
  * @property {number} page - page number where the annotation is located
  * @property {string=} pageStr - page number as string, so it can represent page ranges
  * @property {string=} comment - user-written comment for the annotation
@@ -164,25 +164,31 @@ function insertPageNumber(annotations, pageNo) {
 	});
 }
 
-/** code: "_" or annotation type "Underline" -> split off and send to Reminders.app
- * when tots is not installed, Underlines are ignored and annotations with
- * leading "_" are still extracted (though the "_" is removed)
+/** code: "_" or annotation type "Underline" -> split off and send to SideNotes.app
+ * when SideNotes is not installed, Underlines and annotations with leading "_" are
+ * still extracted (though the "_" is removed)
  * @param {Annotation[]} annotations
- * @param {string} filename
  * @param {string=} citekey - only to be passed to jsonToMd of the underlines
  * @returns {Annotation[]}
  */
-function processUnderlines(annotations, filename, citekey) {
+function processUnderlines(annotations, citekey) {
 	let totInstalled;
+	try {
+		Application("Tot");
+		totInstalled = true;
+	} catch (_error) {
+		totInstalled = false;
+	}
 
 	// Annotations with leading "_": collected & removal of the "_"
 	const underscoreAnnos = [];
 	for (const anno of annotations) {
 		if (anno.comment?.startsWith("_")) {
 			anno.comment = anno.comment.slice(1).trim();
+			anno.type = "Underscore"; // Define type for underscore notes
 			underscoreAnnos.push(anno);
 		}
-	}
+    }
 
 	// Underline annotations
 	if (totInstalled) {
@@ -190,23 +196,16 @@ function processUnderlines(annotations, filename, citekey) {
 
 		const annosToSplitOff = [...underlineAnnos, ...underscoreAnnos];
 		if (annosToSplitOff.length > 0) {
+			const dot = 2;
 			const text = jsonToMd(annosToSplitOff, citekey);
-
-			// create new reminder due today
-			const rem = Application("Reminders");
-			const today = new Date();
-			const newReminder = rem.Reminder({
-				name: `Underline Annotations for ${filename}`,
-				body: text,
-				alldayDueDate: today,
-			});
-			rem.defaultList().reminders.push(newReminder);
-			rem.quit();
+			app.openLocation(`tot://${dot}/append?text=${encodeURIComponent(text)}`);
 		}
-	}
 
-	// return only annotations that are not underlines
-	return annotations.filter((/** @type {{ type: string; }} */ anno) => anno.type !== "Underline");
+		// Filter out both underline and underscore annotations if they were
+		// sent to SideNotes
+		annotations = annotations.filter((a) => !annosToSplitOff.includes(a));
+	}
+	return annotations;
 }
 
 /**
@@ -216,6 +215,10 @@ function processUnderlines(annotations, filename, citekey) {
  */
 function jsonToMd(annotations, citekey) {
 	let firstItem = true;
+	let firstQuestion = true;
+	let firstCallout = true;
+	let needsHeading = true;
+	const callouts = ["Question Callout", "Key Callout", "Cite Callout", "Other Callout"];
 	const formattedAnnos = annotations.map((a) => {
 		let comment;
 		let output;
@@ -242,9 +245,8 @@ function jsonToMd(annotations, citekey) {
 
 		// type specific output
 		switch (a.type) {
-			case "Highlight":
-			case "Underline": {
-				// highlights/underlines = bullet points
+			case "Highlight": {
+				// highlights/underlines = block quote
 				if (comment) {
 					// ordered list, if comments starts with numbering
 					const numberRegex = /^\d+[.)] ?/;
@@ -255,28 +257,123 @@ function jsonToMd(annotations, citekey) {
 					} else {
 						output = "- ";
 					}
-					output += `${annotationTag}**${comment}** "${a.quote}" ${reference}`;
+					// Remove leading list characters, correctly format comment 
+					// lists, and indent sub-lists if present
+					comment = comment.replace(/^- /, "");
+					comment = comment.replaceAll(" - ", "\t- ");
+					comment = comment.replaceAll(/(\t*- )/g, "\n\t$1");
+					output += `> ${annotationTag}${a.quote} ${reference}\n\t- ${comment}`;
 				} else {
-					output = `- ${annotationTag}"${a.quote}" ${reference}`;
+					output = `- > ${annotationTag}${a.quote} ${reference}`;
 				}
 				break;
 			}
+			case "Underline": {
+				// underlines = side notes
+				if (comment) {
+					// Remove leading list characters, correctly format comment 
+					// lists, and indent sub-lists if present
+					comment = comment.replace(/^- /, "");
+					comment = comment.replaceAll(" - ", "\t- ");
+					comment = comment.replaceAll(/(\t*- )/g, "\n\t$1");
+					output = `- [ ] ${annotationTag}${a.quote}\n\t- ${comment}`;
+				} else {
+					output = `- [ ] ${annotationTag}${a.quote}`;
+				}
+				break;
+			}
+			case "Underscore": {
+				// underscores = comments for side notes
+				// Remove leading list characters, correctly format comment 
+				// lists, indent sub-lists if present, and convert items to tasks
+				comment = comment.replace(/^- /, "");
+				comment = comment.replaceAll(" - ", "\t- ");
+				comment = comment.replaceAll(/(\t*- )/g, "\n$1[ ] ");
+				output = `- [ ] ${annotationTag}${comment}`;
+				break;
+			}
 			case "Free Comment": {
-				// free comments = block quote (my comments)
-				comment = comment.replaceAll("\n", "\n> ");
-				output = `> ${annotationTag}${comment} ${reference}`;
+				// free comments = bullet point (my notes)
+				// Remove leading list characters, correctly format comment 
+				// lists, and indent sub-lists if present
+				comment = comment.replace(/^- /, "");
+				comment = comment.replaceAll(" - ", "\t- ");
+				comment = comment.replaceAll(/(\t*- )/g, "\n$1");
+				output = `- ${annotationTag}${comment}`;
 				break;
 			}
 			case "Heading": {
 				// ensure no leading line break when heading is first item
 				if (firstItem) output = comment;
 				else output = "\n" + comment;
+				needsHeading = false;
 				break;
 			}
 			case "Question Callout": {
-				// blockquoted comment
-				comment = comment.replaceAll("\n", "\n> ");
-				output = `> [!QUESTION]\n> ${comment}\n`;
+				// free comment with question
+				// Format question answers as a bulleted list
+				comment = comment.replaceAll(" - ", "\t- ");
+				comment = comment.replaceAll(/(\t*- )/g, "\n> $1");
+				
+				// Add heading if this is the first question callout
+				if (firstQuestion) {
+					output = `## Questions\n`;
+					firstQuestion = false;
+				} else {
+					output = ``;
+				}
+				output += `> [!QUESTION]\n> ${comment}\n`;
+				break;
+			}
+			case "Key Callout": {
+				// free comment with key points
+				// Remove leading list characters, correctly format comment 
+				// lists, and indent sub-lists if present
+				comment = comment.replace(/^- /, "");
+				comment = comment.replaceAll(" - ", "\t- ");
+				comment = comment.replaceAll(/(\t*- )/g, "\n> $1");
+				output = `> [!ABSTRACT] @${citekey} Key Points\n> - ${comment}\n\n^${citekey}-key\n`;
+				break;
+			}
+			case "Cite Callout": {
+				// free comment with linked articles
+				// Remove leading list characters, correctly format comment 
+				// lists, and indent sub-lists if present
+				comment = comment.replace(/^- /, "");
+				comment = comment.replaceAll(" - ", "\t- ");
+				comment = comment.replaceAll(/(\t*- )/g, "\n> $1");
+				output = `> [!CITE] Related Articles\n> - ${comment}\n\n^${citekey}-cite\n`;
+				break;
+			}
+			case "Other Callout": {
+				// free comment with a callout type
+				// Extract callout type and title from beginning of comment
+				// Type is the first word of the comment, ends on any punctuation
+				// Replace will then remove the matched text from the comment
+				const typeRE = /^\w*/;
+				const callType = comment.match(typeRE)[0].toUpperCase();
+				comment = comment.replace(typeRE, "");
+
+				// Title is text between quotes if present
+				const titleRE = /\s*["„“”«»’]([\w\s]*)["„“”«»’]/;
+				const callTitle = comment.match(titleRE)?.[1] || "";
+				comment = comment.replace(titleRE, "");
+
+				// Remove leading list characters, correctly format comment 
+				// lists, and indent sub-lists if present
+				comment = comment.replace(/^- /, "");
+				comment = comment.replaceAll(" - ", "\t- ");
+				comment = comment.replaceAll(/(\t*- )/g, "\n> $1");
+
+				// Add heading if this is the first other callout
+				if (firstCallout) {
+					output = `## Article Information\n`;
+					firstCallout = false;
+				} else {
+					output = ``;
+				}
+
+				output += `> [!${callType}] ${callTitle}\n> - ${comment}\n`;
 				break;
 			}
 			case "Image": {
@@ -284,6 +381,14 @@ function jsonToMd(annotations, citekey) {
 				break;
 			}
 			default:
+		}
+
+		if (needsHeading && (a.type === "Underline" || a.type === "Underscore")) {
+			output = `# ${citekey}\n` + output;
+			needsHeading = false;
+		} else if (needsHeading && !callouts.includes(a.type)) {
+			output = "## Article Notes\n" + output;
+			needsHeading = false;
 		}
 		firstItem = false;
 		return output;
@@ -301,7 +406,7 @@ function mergeQuotes(annos) {
 	for (let i = 1; i < annos.length; i++) {
 		if (annos[i].type === "Free Comment" || !annos[i].comment) continue;
 		if (annos[i].comment !== "+") continue;
-		let connector = "";
+		let connector = " ";
 
 		// merge page numbers, if across pages
 		if (annos[i - 1].page !== annos[i].page) {
@@ -357,6 +462,33 @@ function questionCallout(annotations) {
 	return [...callouts, ...annoArr];
 }
 
+/** code: "!"
+ * @param {Annotation[]} annotations
+ */
+function keyCallout(annotations) {
+	let annoArr = annotations.map((a) => {
+		if (!a.comment || a.type !== "Free Comment") return a;
+		if (a.comment.startsWith("!key")) {
+			a.type = "Key Callout";
+			a.comment = a.comment.slice(4).trim();
+		} else if (a.comment.startsWith("!cite")) {
+			a.type = "Cite Callout";
+			a.comment = a.comment.slice(5).trim();
+		} else if (a.comment.startsWith("!")) {
+			a.type = "Other Callout";
+			a.comment = a.comment.slice(1).trim();
+		}
+		return a;
+	});
+	const keys = annoArr.filter((a) => a.type === "Key Callout");
+	const cites = annoArr.filter((a) => a.type === "Cite Callout");
+	const other = annoArr.filter((a) => a.type === "Other Callout");
+	annoArr = annoArr.filter((a) => 
+		!["Key Callout", "Cite Callout", "Other Callout"].includes(a.type)
+	);
+	return [...keys, ...cites, ...other, ...annoArr];
+}
+
 /** images / rectangle annotations (pdfannots2json only)
  * @param {Annotation[]} annotations
  * @param {string} filename
@@ -405,7 +537,7 @@ function transformTag4yaml(annotations, keywords) {
 
 	// Merge & Save both
 	if (newKeywords.length > 0) {
-		newKeywords = [...new Set(newKeywords)].map((keyword) => keyword.trim().replaceAll(" ", "-"));
+		newKeywords = [...new Set(newKeywords)].map((keyword) => "article/" + keyword.trim().replaceAll(" ", "-"));
 		tagsForYaml = newKeywords.join(", ") + ", ";
 	}
 
@@ -557,13 +689,16 @@ function writeNote(annos, metad, outputPath, filename) {
 
 	// yaml frontmatter
 	const yamlKeys = [
-		`aliaseses: "${metad.title}"`,
-		`tags: [${metad.tagsForYaml}]`,
+		`aliases: "${metad.title}"`,
+		`tags: [literature-note, phd/reading, ${metad.tagsForYaml}]`,
 		"cssclasses: pdf-annotations",
 		`citekey: ${metad.citekey}`,
+		`title: "${metad.title}"`,
 		`year: ${metad.year.toString()}`,
 		`author: ${authorStr}`,
 		`publicationType: ${metad.ptype}`,
+		`folder: 30 Working/33 Reading`,
+		`fileClass: literature-note`,
 	];
 	// url & doi do not exist for every entry, so only inserting them if they
 	// exist to prevent empty yaml keys
@@ -577,6 +712,12 @@ function writeNote(annos, metad, outputPath, filename) {
 	const noteContent = `---
 ${yamlKeys.join("\n")}
 ---
+
+# ${metad.title}
+
+> [!FILE] Article PDF
+> 
+> [${metad.citekey}.pdf](file:///Users/christyray/Drive/(2)%20Grad%20School/Research/Citation%20Library/${metad.citekey}.pdf)
 
 ${annos}
 `;
@@ -610,6 +751,7 @@ function run(argv) {
 	annos = mergeQuotes(annos);
 	annos = transformHeadings(annos);
 	annos = questionCallout(annos);
+	annos = keyCallout(annos);
 	const { filteredArray, tagsForYaml } = transformTag4yaml(annos, metadata?.keywords || "");
 	annos = filteredArray;
 	if (metadata) metadata.tagsForYaml = tagsForYaml;
