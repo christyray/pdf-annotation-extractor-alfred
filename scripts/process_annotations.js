@@ -140,11 +140,13 @@ function cleanQuoteKey(annotations) {
 			.replaceAll(" - ", " – ") // proper em-dash
 			.replaceAll("...", "…") // ellipsis
 			.replaceAll(". . . ", "…") // ellipsis
-			.replaceAll("\\u00AD", "") // remove invisible character
-			.replaceAll("\\u0026", "&") // resolve &-symbol
+			.replaceAll(/\u00AD/g, "") // remove invisible character
+			.replaceAll(/\u0026/g, "&") // resolve "&"-symbol
 			.replace(/’’|‘‘|["„“”«»’]/g, "'") // quotation marks
-			.replace(/(\D[.,])\d/g, "$1") // remove footnotes from quote
+			.replaceAll(/(\D[.,])\d/g, "$1") // remove footnotes from quote
 			.replace(/(\w)-\s(\w)/gm, "$1$2") // remove leftover hyphens
+			.replaceAll(/\uFFFD/g, "") // remove replacement character
+			.replaceAll(/\u00BD/g, "") // remove broken math text
 			.trim();
 		return a;
 	});
