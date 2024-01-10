@@ -74,6 +74,13 @@ function toTitleCase(str) {
  * @property {number} year
  */
 
+/** JSON signature for applications for underline notes
+ * @typedef {Object} UnderlineApp
+ * @property {"SideNotes"|"Tot"|"Reminders"} name - of the application to use
+ * @property {string=} preEntry - string to use for citekey heading
+ * @property {string=} postEntry - string to append to underlined notes
+ */
+
 //──────────────────────────────────────────────────────────────────────────────
 
 /** to make pdfannots and pdfannots2json compatible with the format required by this script
@@ -166,20 +173,90 @@ function insertPageNumber(annotations, pageNo) {
 	});
 }
 
-/** code: "_" or annotation type "Underline" -> split off and send to SideNotes.app
- * when SideNotes is not installed, Underlines and annotations with leading "_" are
+/** defines the properties for the output application for annotation type 
+ * "underline" and annotations beginning with "_"
+ * @param {string} appName
+ * @param {string} citekey
+ */
+function defineApp(appName, citekey) {
+	/** @type {UnderlineApp} */
+	const application = { name: appName };
+
+	// Specify formatting for before and after note string
+	switch (application.name) {
+		case "SideNotes":
+			application.preEntry = `# ${citekey}\n`;
+			application.postEntry = ``;
+			break;
+		case "Tot":
+			application.preEntry = 
+				`--------------------\n` +
+				`${citekey}\n` +
+				`--------------------\n`;
+			application.postEntry = `\n\n`;
+			break;
+		case "Reminders":
+			application.preEntry = ``;
+			application.postEntry = ``;
+			break;
+		default:
+	}
+
+	return application;
+}
+
+/** exports the underline and underscore notes using the appropriate export 
+ * function for the desired output application 
+ * @param {string} appName - application to export notes to
+ * @param {string} text - notes for export
+ * @param {string} filename - used for exporting to Reminders
+ */
+function exportUnderlines(appName, text, filename) {
+	// Use correct export syntax for desired application
+	switch (appName) {
+		case "SideNotes":
+			Application("SideNotes").createNote({
+				"folder": Application("SideNotes").folders.whose({"name": "Annotations"})[0](),
+				text: text 
+			});
+			break;
+		case "Tot":
+			const dot = 2;
+			app.openLocation(`tot://${dot}/append?text=${encodeURIComponent(text)}`);
+			break;
+		case "Reminders":
+			// create new reminder due today
+			const rem = Application("Reminders");
+			const today = new Date();
+			const newReminder = rem.Reminder({
+				name: `Underline Annotations for ${filename}`,
+				body: text,
+				alldayDueDate: today,
+			});
+			rem.defaultList().reminders.push(newReminder);
+			rem.quit();
+		default:
+	}
+	return;
+}
+
+/** code: "_" or annotation type "Underline" -> split off and send to export app
+ * when the app is not installed, Underlines and annotations with leading "_" are
  * still extracted (though the "_" is removed)
  * @param {Annotation[]} annotations
+ * @param {string} filename
  * @param {string=} citekey - only to be passed to jsonToMd of the underlines
+ * @param {string} appName
  * @returns {Annotation[]}
  */
-function processUnderlines(annotations, citekey) {
-	let totInstalled;
+function processUnderlines(annotations, filename, citekey, appName) {
+	// specified application is installed?
+	let appInstalled;
 	try {
-		Application("Tot");
-		totInstalled = true;
+		Application(appName);
+		appInstalled = true;
 	} catch (_error) {
-		totInstalled = false;
+		appInstalled = false;
 	}
 
 	// Annotations with leading "_": collected & removal of the "_"
@@ -193,18 +270,20 @@ function processUnderlines(annotations, citekey) {
     }
 
 	// Underline annotations
-	if (totInstalled) {
+	if (appInstalled) {
+		// Define properties for export application
+		const outApp = defineApp(appName, citekey);
+
 		const underlineAnnos = annotations.filter((a) => a.type === "Underline");
 
 		const annosToSplitOff = [...underlineAnnos, ...underscoreAnnos];
 		if (annosToSplitOff.length > 0) {
-			const dot = 2;
-			const text = jsonToMd(annosToSplitOff, citekey);
-			app.openLocation(`tot://${dot}/append?text=${encodeURIComponent(text)}`);
+			const text = jsonToMd(annosToSplitOff, citekey, appName) + outApp?.postEntry;
+			exportUnderlines(appName, text, filename);
 		}
 
 		// Filter out both underline and underscore annotations if they were
-		// sent to SideNotes
+		// sent to export app
 		annotations = annotations.filter((a) => !annosToSplitOff.includes(a));
 	}
 	return annotations;
@@ -213,9 +292,10 @@ function processUnderlines(annotations, citekey) {
 /**
  * @param {Annotation[]} annotations
  * @param {string=} citekey
+ * @param {string=} appName
  * @returns {string}
  */
-function jsonToMd(annotations, citekey) {
+function jsonToMd(annotations, citekey, appName) {
 	let firstItem = true;
 	let firstQuestion = true;
 	let firstCallout = true;
@@ -385,8 +465,10 @@ function jsonToMd(annotations, citekey) {
 			default:
 		}
 
-		if (needsHeading && (a.type === "Underline" || a.type === "Underscore")) {
-			output = `# ${citekey}\n` + output;
+		if (needsHeading && 
+			(a.type === "Underline" || a.type === "Underscore") &&
+			typeof appName !== 'undefined') {
+			output = defineApp(appName, citekey)?.preEntry + `${output}`;
 			needsHeading = false;
 		} else if (needsHeading && !callouts.includes(a.type)) {
 			output = "## Article Notes\n" + output;
@@ -733,6 +815,7 @@ ${annos}
 // biome-ignore lint/correctness/noUnusedVariables: AlfredRun
 function run(argv) {
 	const [filename, rawAnnotations, entry, outPath, engine] = argv;
+	const appName = "SideNotes"; // hard-coding for now, can set as Alfred argument
 	const usePdfannots = engine === "pdfannots";
 	const hasLibraryEntry = entry !== "";
 	let metadata;
@@ -760,8 +843,8 @@ function run(argv) {
 	if (!usePdfannots) annos = insertImage4pdfannots2json(annos, filename);
 
 	// finish up
-	annos = processUnderlines(annos, filename, citekey);
-	annos = jsonToMd(annos, citekey);
+	annos = processUnderlines(annos, filename, citekey, appName);
+	annos = jsonToMd(annos, citekey, appName);
 
 	writeNote(annos, metadata, outPath, filename);
 	return;
