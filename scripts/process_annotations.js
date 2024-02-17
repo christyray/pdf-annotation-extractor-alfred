@@ -414,7 +414,7 @@ function jsonToMd(annotations, citekey, appName) {
 				comment = comment.replace(/^- /, "");
 				comment = comment.replaceAll(" - ", "\t- ");
 				comment = comment.replaceAll(/(\t*- )/g, "\n> $1");
-				output = `> [!ABSTRACT] @${citekey} Key Points\n> - ${comment}\n\n^${citekey}-key\n`;
+				output = `> [!ABSTRACT] ${citekey} Key Points\n> - ${comment}\n\n^${citekey}-key\n`;
 				break;
 			}
 			case "Cite Callout": {
