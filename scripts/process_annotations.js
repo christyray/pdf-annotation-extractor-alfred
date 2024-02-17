@@ -692,7 +692,7 @@ function extractMetadata(citekey, rawEntry) {
 		} else if (property.match(/author *=/)) {
 			data.author = extract(property);
 		} else if (property.match(/keywords *=/)) {
-			data.keywords = extract(property).replaceAll(", ", ",").replaceAll(" ", "-"); // no spaces allowed in tags
+			data.keywords = extract(property).replaceAll(", ", ",").replaceAll("; ", ",").replaceAll(" ", "-"); // no spaces allowed in tags
 		} else if (property.match(/doi *=/)) {
 			data.url = "https://doi.org/" + extract(property);
 			data.doi = extract(property);
