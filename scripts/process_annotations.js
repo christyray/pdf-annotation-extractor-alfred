@@ -621,8 +621,8 @@ function transformTag4yaml(annotations, keywords) {
 
 	// Merge & Save both
 	if (newKeywords.length > 0) {
-		newKeywords = [...new Set(newKeywords)].map((keyword) => "article/" + keyword.trim().replaceAll(" ", "-"));
-		tagsForYaml = newKeywords.map((keyword) => `"${keyword}"`).join(", ");
+		newKeywords = [...new Set(newKeywords)].map((keyword) => "  - article/" + keyword.trim().replaceAll(" ", "-"));
+		tagsForYaml = newKeywords.map((keyword) => `${keyword}`).join("\n");
 	}
 
 	// return annotation array without tags
@@ -772,10 +772,10 @@ function writeNote(annos, metad, outputPath, filename) {
 
 	// yaml frontmatter
 	const yamlKeys = [
-		`aliases: "${metad.title}"`,
+		`aliases: \n  - "${metad.title}"`,
 		`cdate: "${new Date().toISOString().slice(0, 10)}"`,
-		`tags: [literature-note, phd/reading, ${metad.tagsForYaml}]`,
-		"cssclasses: pdf-annotations",
+		`tags:\n  - literature-note\n  - phd/reading\n${metad.tagsForYaml}`,
+		"cssclasses: \n  - pdf-annotations",
 		`citekey: ${metad.citekey}`,
 		`title: "${metad.title}"`,
 		`author: [${authorStr}]`, // already quoted above
